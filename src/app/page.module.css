@@ -9,6 +9,15 @@
   background: var(--page-bg);
 }
 
+/* Component view: lock to viewport height so impact bar is sticky-at-bottom
+   and card centers in the middle. Main scrolls internally if card exceeds. */
+.shellFixed {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* =========================================
    Top bar
    ========================================= */
@@ -196,20 +205,20 @@
    ========================================= */
 
 .componentMain {
-  flex: 1;
-  max-width: 1200px;
+  flex: 1 1 0;
+  min-height: 0;
   width: 100%;
-  margin: 0 auto;
-  padding: var(--space-4) var(--space-5) var(--space-4);
+  padding: var(--space-4) var(--space-5);
   display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+  justify-content: center;
+  align-items: center;
+  overflow-y: auto;
 }
 
 .progressBar {
+  flex-shrink: 0;
   height: 3px;
   background: var(--line);
-  border-radius: 999px;
   overflow: hidden;
 }
 
@@ -228,6 +237,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  width: 100%;
+  max-width: 1200px;
+  margin: auto;
 }
 
 .componentHeader {
@@ -551,14 +563,14 @@
    ========================================= */
 
 .impactFooter {
-  padding: var(--space-3) var(--space-4);
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-6);
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-top: 1px solid var(--line);
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  box-shadow: var(--shadow-sm);
+  gap: var(--space-6);
+  box-shadow: 0 -2px 16px rgba(0, 0, 0, 0.3);
 }
 
 .impactFooterLabel {
@@ -594,6 +606,7 @@
   grid-template-columns: repeat(4, 1fr);
   gap: var(--space-4);
   flex: 1;
+  max-width: 800px;
 }
 
 .impactMetric {

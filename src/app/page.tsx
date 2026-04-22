@@ -138,8 +138,10 @@ export default function Home() {
 
   const currentComponent = visibleComponents[state.currentIndex] ?? null;
 
+  const isComponentView = state.view === "component" && !!currentComponent;
+
   return (
-    <div className={styles.shell}>
+    <div className={`${styles.shell} ${isComponentView ? styles.shellFixed : ""}`}>
       {showConfetti && <Confetti />}
 
       <TopBar
@@ -162,28 +164,40 @@ export default function Home() {
         />
       )}
 
-      {state.view === "component" && currentComponent && (
-        <ComponentScreen
-          component={currentComponent}
-          maturity={state.components[currentComponent.id] ?? 0}
-          note={state.notes[currentComponent.id] ?? ""}
-          index={state.currentIndex}
-          total={visibleComponents.length}
-          dependencies={currentComponent.dependencies?.map((id) => ({
-            id,
-            name: COMPONENT_INDEX[id]?.name ?? id,
-            maturity: state.components[id] ?? 0,
-            hidden: state.hidden.includes(id),
-          }))}
-          onMaturityChange={(m) => setMaturity(currentComponent.id, m)}
-          onNoteChange={(n) => setNote(currentComponent.id, n)}
-          onSkip={skipCurrent}
-          onPrev={goPrev}
-          onNext={goNext}
-          impact={impact}
-          configuredCount={configuredCount}
-          visibleTotal={visibleComponents.length}
-        />
+      {isComponentView && (
+        <>
+          <div className={styles.progressBar}>
+            <div
+              className={styles.progressFill}
+              style={{
+                width: `${((state.currentIndex + 1) / visibleComponents.length) * 100}%`,
+              }}
+            />
+          </div>
+          <ComponentScreen
+            component={currentComponent}
+            maturity={state.components[currentComponent.id] ?? 0}
+            note={state.notes[currentComponent.id] ?? ""}
+            index={state.currentIndex}
+            total={visibleComponents.length}
+            dependencies={currentComponent.dependencies?.map((id) => ({
+              id,
+              name: COMPONENT_INDEX[id]?.name ?? id,
+              maturity: state.components[id] ?? 0,
+              hidden: state.hidden.includes(id),
+            }))}
+            onMaturityChange={(m) => setMaturity(currentComponent.id, m)}
+            onNoteChange={(n) => setNote(currentComponent.id, n)}
+            onSkip={skipCurrent}
+            onPrev={goPrev}
+            onNext={goNext}
+          />
+          <ImpactFooter
+            impact={impact}
+            configured={configuredCount}
+            total={visibleComponents.length}
+          />
+        </>
       )}
 
       {state.view === "summary" && plan && (
@@ -378,9 +392,6 @@ function ComponentScreen({
   onSkip,
   onPrev,
   onNext,
-  impact,
-  configuredCount,
-  visibleTotal,
 }: {
   component: SystemComponent;
   maturity: Maturity;
@@ -393,18 +404,9 @@ function ComponentScreen({
   onSkip: () => void;
   onPrev: () => void;
   onNext: () => void;
-  impact: ReturnType<typeof computeChurnImpact>;
-  configuredCount: number;
-  visibleTotal: number;
 }) {
-  const progress = ((index + 1) / total) * 100;
-
   return (
     <main className={styles.componentMain}>
-      <div className={styles.progressBar}>
-        <div className={styles.progressFill} style={{ width: `${progress}%` }} />
-      </div>
-
       <section className={styles.componentCard}>
         <div className={styles.componentHeader}>
           <div>
@@ -500,12 +502,6 @@ function ComponentScreen({
           </button>
         </div>
       </section>
-
-      <ImpactFooter
-        impact={impact}
-        configured={configuredCount}
-        total={visibleTotal}
-      />
     </main>
   );
 }
