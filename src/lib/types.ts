@@ -68,23 +68,23 @@ export type SystemComponent = {
   croFraming?: string; // plain-english copy for CRO mode
 };
 
-export type Mode = "architect" | "cro" | "integration";
-
 export type SystemContext = {
+  clientName: string;
   accountCount: AccountCount | null;
   arrBand: ArrBand | null;
   crm: Crm | null;
   currentGrr: number | null;
 };
 
+export type DiscoveryView = "intro" | "component" | "summary" | "playbook";
+
 export type SystemState = {
   components: Record<string, Maturity>;
   notes: Record<string, string>;
+  hidden: string[]; // component IDs marked "not relevant"
   context: SystemContext;
-  mode: Mode;
-  connected: boolean; // mocked CRM connection status
-  connectedAt: string | null;
-  view: "canvas" | "plan" | "build" | "complete";
+  view: DiscoveryView;
+  currentIndex: number; // which component screen we're on (0-based over visible list)
   tasksDone: Record<string, boolean>;
 };
 
@@ -195,6 +195,7 @@ export type Plan = {
 };
 
 export const emptyContext: SystemContext = {
+  clientName: "",
   accountCount: null,
   arrBand: null,
   crm: null,
@@ -204,10 +205,9 @@ export const emptyContext: SystemContext = {
 export const emptySystemState: SystemState = {
   components: {},
   notes: {},
+  hidden: [],
   context: emptyContext,
-  mode: "architect",
-  connected: false,
-  connectedAt: null,
-  view: "canvas",
+  view: "intro",
+  currentIndex: 0,
   tasksDone: {},
 };

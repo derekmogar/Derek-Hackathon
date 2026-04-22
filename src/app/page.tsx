@@ -3,7 +3,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   computeChurnImpact,
-  findBrokenChains,
   formatCurrency,
   rankGaps,
 } from "@/lib/churnImpact";
@@ -11,31 +10,32 @@ import {
   COMPONENT_INDEX,
   SYSTEM_COMPONENTS,
 } from "@/lib/components-catalog";
-import { MOCK_HUBSPOT_SCAN } from "@/lib/hubspot-mock";
 import { generatePlan } from "@/lib/planGenerator";
+import {
+  formatDiscoveryNotes,
+  formatTasksAsMarkdown,
+  generateTeamworkTasks,
+} from "@/lib/teamwork";
 import {
   emptySystemState,
   LAYER_LABELS,
-  LAYER_ORDER,
   MATURITY_LABELS,
+  type DiscoveryView,
   type Maturity,
-  type Mode,
   type Plan,
+  type SystemComponent,
   type SystemState,
 } from "@/lib/types";
 import styles from "./page.module.css";
 
-const STORAGE_KEY = "retention-engine:v2";
+const STORAGE_KEY = "retention-engine:v3";
 
 export default function Home() {
   const [state, setState] = useState<SystemState>(emptySystemState);
-  const [activeComponentId, setActiveComponentId] = useState<string | null>(null);
-  const [showConnect, setShowConnect] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [loadedFromStorage, setLoadedFromStorage] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
 
-  // Load from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -49,199 +49,179 @@ export default function Home() {
     setLoadedFromStorage(true);
   }, []);
 
-  // Persist
   useEffect(() => {
     if (!loadedFromStorage) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state, loadedFromStorage]);
 
+  const visibleComponents = useMemo(
+    () => SYSTEM_COMPONENTS.filter((c) => !state.hidden.includes(c.id)),
+    [state.hidden],
+  );
+
   const impact = useMemo(() => computeChurnImpact(state), [state]);
-  const brokenChains = useMemo(() => findBrokenChains(state), [state]);
   const plan: Plan | null = useMemo(
-    () => (state.view !== "canvas" ? generatePlan(state) : null),
+    () => (state.view === "summary" || state.view === "playbook" ? generatePlan(state) : null),
     [state],
   );
 
-  const componentsSetCount = Object.values(state.components).filter(
-    (m) => m > 0,
+  const configuredCount = Object.entries(state.components).filter(
+    ([id, m]) => m > 0 && !state.hidden.includes(id),
   ).length;
 
-  const setMaturity = (id: string, maturity: Maturity) => {
-    setState((prev) => ({
-      ...prev,
-      components: { ...prev.components, [id]: maturity },
-    }));
-  };
+  const setView = (view: DiscoveryView) => setState((p) => ({ ...p, view }));
+  const setCurrentIndex = (i: number) =>
+    setState((p) => ({ ...p, currentIndex: i }));
 
-  const setNote = (id: string, note: string) => {
-    setState((prev) => ({
-      ...prev,
-      notes: { ...prev.notes, [id]: note },
+  const setMaturity = (id: string, maturity: Maturity) =>
+    setState((p) => ({
+      ...p,
+      components: { ...p.components, [id]: maturity },
     }));
-  };
 
-  const setMode = (mode: Mode) => setState((p) => ({ ...p, mode }));
-  const setView = (view: SystemState["view"]) =>
-    setState((p) => ({ ...p, view }));
+  const setNote = (id: string, note: string) =>
+    setState((p) => ({ ...p, notes: { ...p.notes, [id]: note } }));
+
+  const toggleHidden = (id: string) =>
+    setState((p) => {
+      const hidden = p.hidden.includes(id)
+        ? p.hidden.filter((x) => x !== id)
+        : [...p.hidden, id];
+      const stillVisible = SYSTEM_COMPONENTS.filter((c) => !hidden.includes(c.id));
+      const newIndex = Math.min(p.currentIndex, Math.max(0, stillVisible.length - 1));
+      return { ...p, hidden, currentIndex: newIndex };
+    });
+
   const updateContext = <K extends keyof SystemState["context"]>(
     key: K,
     value: SystemState["context"][K],
   ) => setState((p) => ({ ...p, context: { ...p.context, [key]: value } }));
 
-  const runConnect = async () => {
-    setShowConnect(true);
-    setScanning(true);
-    await new Promise((r) => setTimeout(r, 2400));
-    setState((prev) => ({
-      ...prev,
-      context: { ...prev.context, ...MOCK_HUBSPOT_SCAN.context },
-      components: { ...prev.components, ...MOCK_HUBSPOT_SCAN.componentMaturity },
-      connected: true,
-      connectedAt: new Date().toISOString(),
-      mode: prev.mode === "architect" ? "integration" : prev.mode,
-    }));
-    setScanning(false);
+  const goNext = () => {
+    if (state.currentIndex < visibleComponents.length - 1) {
+      setCurrentIndex(state.currentIndex + 1);
+    } else {
+      goSummary();
+    }
+  };
+
+  const goPrev = () => {
+    if (state.currentIndex > 0) {
+      setCurrentIndex(state.currentIndex - 1);
+    } else {
+      setView("intro");
+    }
+  };
+
+  const goSummary = () => {
+    setView("summary");
+    setShowConfetti(true);
+    setTimeout(() => setShowConfetti(false), 3000);
+  };
+
+  const beginDiscovery = () => {
+    setView("component");
+    setCurrentIndex(0);
+  };
+
+  const skipCurrent = () => {
+    const comp = visibleComponents[state.currentIndex];
+    if (!comp) return;
+    toggleHidden(comp.id);
   };
 
   const resetAll = () => {
-    if (!confirm("Reset the canvas to a blank state?")) return;
+    if (!confirm("Reset the discovery? All notes and maturity levels will be cleared.")) return;
     localStorage.removeItem(STORAGE_KEY);
     setState(emptySystemState);
-    setActiveComponentId(null);
   };
 
-  const openPlan = () => setView("plan");
-  const goBuild = () => setView("build");
-  const goComplete = () => {
-    setView("complete");
-    setShowConfetti(true);
-    setTimeout(() => setShowConfetti(false), 4000);
-  };
-
-  const activeComponent = activeComponentId ? COMPONENT_INDEX[activeComponentId] : null;
-
-  const allTasks = plan ? plan.phases.flatMap((p) => p.tasks.map((t) => t.id)) : [];
-  const doneCount = allTasks.filter((id) => state.tasksDone[id]).length;
-  const buildComplete = allTasks.length > 0 && doneCount === allTasks.length;
+  const currentComponent = visibleComponents[state.currentIndex] ?? null;
 
   return (
     <div className={styles.shell}>
       {showConfetti && <Confetti />}
 
       <TopBar
-        mode={state.mode}
-        onModeChange={setMode}
-        connected={state.connected}
-        connectedPortal={state.connected ? MOCK_HUBSPOT_SCAN.portal : null}
         view={state.view}
-        onBackToCanvas={() => setView("canvas")}
+        clientName={state.context.clientName}
+        onOpenMenu={() => setMenuOpen(true)}
         onReset={resetAll}
+        onGoIntro={() => setView("intro")}
       />
 
-      {state.view === "canvas" && (
-        <main className={styles.canvasShell}>
-          <section className={styles.canvasMain}>
-            <CanvasHeader
-              mode={state.mode}
-              componentsSet={componentsSetCount}
-              total={SYSTEM_COMPONENTS.length}
-              onConnect={runConnect}
-              connected={state.connected}
-            />
-
-            <SystemCanvas
-              state={state}
-              brokenChains={brokenChains}
-              onTileClick={(id) => setActiveComponentId(id)}
-              activeId={activeComponentId}
-            />
-
-            {componentsSetCount >= 4 && (
-              <div className={styles.exportCta}>
-                <div>
-                  <div className={styles.exportCtaTitle}>
-                    Ready to export the playbook?
-                  </div>
-                  <div className={styles.exportCtaSub}>
-                    Generate the tailored implementation plan from your canvas
-                    state — {componentsSetCount} of {SYSTEM_COMPONENTS.length}{" "}
-                    components configured.
-                  </div>
-                </div>
-                <button
-                  className={`${styles.btn} ${styles.btnLime} ${styles.btnLg}`}
-                  onClick={openPlan}
-                >
-                  Generate Playbook →
-                </button>
-              </div>
-            )}
-          </section>
-
-          <aside className={styles.canvasSidebar}>
-            <ContextCard
-              context={state.context}
-              onChange={updateContext}
-              mode={state.mode}
-              connected={state.connected}
-            />
-            <ImpactScorecard impact={impact} mode={state.mode} />
-            <TopGapsCard
-              state={state}
-              onTileClick={(id) => setActiveComponentId(id)}
-            />
-          </aside>
-        </main>
-      )}
-
-      {state.view === "plan" && plan && (
-        <PlanOutput plan={plan} mode={state.mode} onContinue={goBuild} />
-      )}
-
-      {state.view === "build" && plan && (
-        <BuildOutput
-          plan={plan}
-          tasksDone={state.tasksDone}
-          onToggle={(id) =>
-            setState((p) => ({
-              ...p,
-              tasksDone: { ...p.tasksDone, [id]: !p.tasksDone[id] },
-            }))
-          }
-          onComplete={goComplete}
-          canComplete={buildComplete}
+      {state.view === "intro" && (
+        <IntroScreen
+          context={state.context}
+          onContextChange={updateContext}
+          visibleCount={visibleComponents.length}
+          totalCount={SYSTEM_COMPONENTS.length}
+          hiddenCount={state.hidden.length}
+          onBegin={beginDiscovery}
+          hasProgress={configuredCount > 0}
         />
       )}
 
-      {state.view === "complete" && plan && (
-        <CompleteOutput
-          plan={plan}
-          onBackToCanvas={() => setView("canvas")}
-        />
-      )}
-
-      {activeComponent && (
-        <DiagnosticPanel
-          component={activeComponent}
-          maturity={state.components[activeComponent.id] ?? 0}
-          note={state.notes[activeComponent.id] ?? ""}
-          mode={state.mode}
-          dependencies={activeComponent.dependencies?.map((depId) => ({
-            id: depId,
-            name: COMPONENT_INDEX[depId]?.name ?? depId,
-            maturity: state.components[depId] ?? 0,
+      {state.view === "component" && currentComponent && (
+        <ComponentScreen
+          component={currentComponent}
+          maturity={state.components[currentComponent.id] ?? 0}
+          note={state.notes[currentComponent.id] ?? ""}
+          index={state.currentIndex}
+          total={visibleComponents.length}
+          dependencies={currentComponent.dependencies?.map((id) => ({
+            id,
+            name: COMPONENT_INDEX[id]?.name ?? id,
+            maturity: state.components[id] ?? 0,
+            hidden: state.hidden.includes(id),
           }))}
-          onClose={() => setActiveComponentId(null)}
-          onMaturityChange={(m) => setMaturity(activeComponent.id, m)}
-          onNoteChange={(n) => setNote(activeComponent.id, n)}
+          onMaturityChange={(m) => setMaturity(currentComponent.id, m)}
+          onNoteChange={(n) => setNote(currentComponent.id, n)}
+          onSkip={skipCurrent}
+          onPrev={goPrev}
+          onNext={goNext}
+          impact={impact}
+          configuredCount={configuredCount}
+          visibleTotal={visibleComponents.length}
         />
       )}
 
-      {showConnect && (
-        <ConnectModal
-          scanning={scanning}
-          result={scanning ? null : MOCK_HUBSPOT_SCAN}
-          onClose={() => setShowConnect(false)}
+      {state.view === "summary" && plan && (
+        <SummaryScreen
+          plan={plan}
+          state={state}
+          visibleCount={visibleComponents.length}
+          hiddenCount={state.hidden.length}
+          onViewPlaybook={() => setView("playbook")}
+          onBackToComponent={(index) => {
+            setCurrentIndex(index);
+            setView("component");
+          }}
+        />
+      )}
+
+      {state.view === "playbook" && plan && (
+        <PlaybookScreen plan={plan} onBack={() => setView("summary")} />
+      )}
+
+      {menuOpen && (
+        <ComponentMenu
+          state={state}
+          onClose={() => setMenuOpen(false)}
+          onJump={(idx) => {
+            setCurrentIndex(idx);
+            setView("component");
+            setMenuOpen(false);
+          }}
+          onToggleHidden={toggleHidden}
+          onGoSummary={() => {
+            setView("summary");
+            setMenuOpen(false);
+          }}
+          onGoIntro={() => {
+            setView("intro");
+            setMenuOpen(false);
+          }}
         />
       )}
     </div>
@@ -251,75 +231,40 @@ export default function Home() {
 /* ============================ Top bar ============================ */
 
 function TopBar({
-  mode,
-  onModeChange,
-  connected,
-  connectedPortal,
   view,
-  onBackToCanvas,
+  clientName,
+  onOpenMenu,
   onReset,
+  onGoIntro,
 }: {
-  mode: Mode;
-  onModeChange: (m: Mode) => void;
-  connected: boolean;
-  connectedPortal: string | null;
-  view: SystemState["view"];
-  onBackToCanvas: () => void;
+  view: DiscoveryView;
+  clientName: string;
+  onOpenMenu: () => void;
   onReset: () => void;
+  onGoIntro: () => void;
 }) {
   return (
     <header className={styles.topbar}>
-      <div className={styles.brand}>
+      <div className={styles.brand} onClick={onGoIntro} style={{ cursor: "pointer" }}>
         <div className={styles.brandMark}>RE</div>
         <div>
           <div style={{ fontWeight: 700 }}>The Retention Engine</div>
           <div className={styles.brandSub}>
-            {connected && connectedPortal ? (
-              <span>
-                <span className={styles.connectedDot} /> Connected · {connectedPortal}
-              </span>
+            {clientName ? (
+              <>Discovery · <b>{clientName}</b></>
             ) : (
-              "Renewal Management System Builder"
+              "Renewal Management Discovery"
             )}
           </div>
         </div>
       </div>
-
       <div className={styles.topbarActions}>
-        {view !== "canvas" && (
-          <button
-            className={`${styles.btn} ${styles.btnGhostDark} no-print`}
-            onClick={onBackToCanvas}
-          >
-            ← Back to canvas
+        {view !== "intro" && (
+          <button className={`${styles.btn} ${styles.btnGhost} no-print`} onClick={onOpenMenu}>
+            ☰ Components
           </button>
         )}
-        {view === "canvas" && (
-          <div className={styles.modeSwitch}>
-            <button
-              className={`${styles.modeChip} ${mode === "architect" ? styles.modeActive : ""}`}
-              onClick={() => onModeChange("architect")}
-            >
-              Architect
-            </button>
-            <button
-              className={`${styles.modeChip} ${mode === "cro" ? styles.modeActive : ""}`}
-              onClick={() => onModeChange("cro")}
-            >
-              CRO
-            </button>
-            <button
-              className={`${styles.modeChip} ${mode === "integration" ? styles.modeActive : ""}`}
-              onClick={() => onModeChange("integration")}
-            >
-              Integration
-            </button>
-          </div>
-        )}
-        <button
-          className={`${styles.btn} ${styles.btnGhostDark} no-print`}
-          onClick={onReset}
-        >
+        <button className={`${styles.btn} ${styles.btnGhost} no-print`} onClick={onReset}>
           Reset
         </button>
       </div>
@@ -327,383 +272,180 @@ function TopBar({
   );
 }
 
-/* ============================ Canvas header ============================ */
+/* ============================ Intro screen ============================ */
 
-function CanvasHeader({
-  mode,
-  componentsSet,
-  total,
-  onConnect,
-  connected,
-}: {
-  mode: Mode;
-  componentsSet: number;
-  total: number;
-  onConnect: () => void;
-  connected: boolean;
-}) {
-  const headline =
-    mode === "cro"
-      ? "Where is churn hiding in your business?"
-      : mode === "integration"
-        ? "Scan your CRM. See what's missing."
-        : "Diagnose the renewal system. Design the missing pieces.";
-
-  const sub =
-    mode === "cro"
-      ? "Click any tile to see what best-in-class looks like — and how your team compares. Live impact updates in the sidebar."
-      : mode === "integration"
-        ? "Connect HubSpot to auto-detect maturity. Adjust each component as you validate with the team."
-        : "Click any component to diagnose its current state, see benchmarks, and set the target maturity. Dependencies highlight broken chains across layers.";
-
-  return (
-    <div className={styles.canvasHeader}>
-      <div>
-        <div className={styles.canvasEyebrow}>
-          Renewal Management Diagnostic Canvas
-        </div>
-        <h1 className={styles.canvasHeadline}>{headline}</h1>
-        <p className={styles.canvasSub}>{sub}</p>
-      </div>
-      <div className={styles.canvasActions}>
-        <div className={styles.canvasProgress}>
-          <span>
-            <b>{componentsSet}</b> of {total} components configured
-          </span>
-          <div className={styles.canvasProgressBar}>
-            <div
-              className={styles.canvasProgressFill}
-              style={{ width: `${(componentsSet / total) * 100}%` }}
-            />
-          </div>
-        </div>
-        {!connected && (
-          <button
-            className={`${styles.btn} ${styles.btnPrimary} no-print`}
-            onClick={onConnect}
-          >
-            ⚡ Connect HubSpot
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ============================ System canvas ============================ */
-
-function SystemCanvas({
-  state,
-  brokenChains,
-  onTileClick,
-  activeId,
-}: {
-  state: SystemState;
-  brokenChains: Record<string, string[]>;
-  onTileClick: (id: string) => void;
-  activeId: string | null;
-}) {
-  return (
-    <div className={styles.canvas}>
-      {LAYER_ORDER.map((layer) => {
-        const tiles = SYSTEM_COMPONENTS.filter((c) => c.layer === layer);
-        return (
-          <div key={layer} className={styles.layer}>
-            <div className={styles.layerLabel}>{LAYER_LABELS[layer]}</div>
-            <div className={styles.layerTiles}>
-              {tiles.map((comp) => (
-                <ComponentTile
-                  key={comp.id}
-                  component={comp}
-                  maturity={state.components[comp.id] ?? 0}
-                  active={activeId === comp.id}
-                  broken={!!brokenChains[comp.id]}
-                  hasNote={!!state.notes[comp.id]}
-                  onClick={() => onTileClick(comp.id)}
-                />
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ComponentTile({
-  component,
-  maturity,
-  active,
-  broken,
-  hasNote,
-  onClick,
-}: {
-  component: (typeof SYSTEM_COMPONENTS)[number];
-  maturity: Maturity;
-  active: boolean;
-  broken: boolean;
-  hasNote: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`${styles.tile} ${styles[`mat-${maturity}`]} ${active ? styles.tileActive : ""} ${broken ? styles.tileBroken : ""}`}
-      onClick={onClick}
-    >
-      <div className={styles.tileHeader}>
-        <span className={`${styles.matDot} ${styles[`matDot-${maturity}`]}`} />
-        <span className={styles.matLabel}>{MATURITY_LABELS[maturity]}</span>
-        {hasNote && <span className={styles.noteMark} title="Has notes">✎</span>}
-        {broken && <span className={styles.brokenMark} title="Broken dependency">!</span>}
-      </div>
-      <div className={styles.tileName}>{component.name}</div>
-      <div className={styles.tileDesc}>{component.shortDescription}</div>
-    </button>
-  );
-}
-
-/* ============================ Context card (sidebar) ============================ */
-
-function ContextCard({
+function IntroScreen({
   context,
-  onChange,
-  mode,
-  connected,
+  onContextChange,
+  visibleCount,
+  totalCount,
+  hiddenCount,
+  onBegin,
+  hasProgress,
 }: {
   context: SystemState["context"];
-  onChange: <K extends keyof SystemState["context"]>(
+  onContextChange: <K extends keyof SystemState["context"]>(
     k: K,
     v: SystemState["context"][K],
   ) => void;
-  mode: Mode;
-  connected: boolean;
+  visibleCount: number;
+  totalCount: number;
+  hiddenCount: number;
+  onBegin: () => void;
+  hasProgress: boolean;
 }) {
   return (
-    <div className={styles.sidebarCard}>
-      <div className={styles.sidebarTitle}>
-        {mode === "cro" ? "Your company" : "Account context"}
-        {connected && <span className={styles.autoFilledBadge}>auto-filled</span>}
-      </div>
-      <div className={styles.contextRow}>
-        <label>Accounts</label>
-        <select
-          value={context.accountCount ?? ""}
-          onChange={(e) =>
-            onChange(
-              "accountCount",
-              (e.target.value || null) as typeof context.accountCount,
-            )
-          }
-        >
-          <option value="">—</option>
-          <option value="under_50">Under 50</option>
-          <option value="50_200">50 – 200</option>
-          <option value="200_500">200 – 500</option>
-          <option value="500_plus">500+</option>
-        </select>
-      </div>
-      <div className={styles.contextRow}>
-        <label>ARR</label>
-        <select
-          value={context.arrBand ?? ""}
-          onChange={(e) =>
-            onChange("arrBand", (e.target.value || null) as typeof context.arrBand)
-          }
-        >
-          <option value="">—</option>
-          <option value="under_1m">&lt; $1M</option>
-          <option value="1_5m">$1 – 5M</option>
-          <option value="5_10m">$5 – 10M</option>
-          <option value="10_25m">$10 – 25M</option>
-          <option value="25_50m">$25 – 50M</option>
-          <option value="50_plus_m">$50M+</option>
-        </select>
-      </div>
-      <div className={styles.contextRow}>
-        <label>CRM</label>
-        <select
-          value={context.crm ?? ""}
-          onChange={(e) =>
-            onChange("crm", (e.target.value || null) as typeof context.crm)
-          }
-        >
-          <option value="">—</option>
-          <option value="hubspot">HubSpot</option>
-          <option value="salesforce">Salesforce</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div className={styles.contextRow}>
-        <label>Current GRR</label>
-        <div className={styles.grrRow}>
-          <input
-            type="range"
-            min={70}
-            max={100}
-            step={0.5}
-            value={context.currentGrr ?? 90}
-            onChange={(e) => onChange("currentGrr", Number(e.target.value))}
-          />
-          <span className={styles.grrReadout}>
-            {context.currentGrr ?? 90}%
-          </span>
+    <main className={styles.centered}>
+      <section className={styles.introCard}>
+        <div className={styles.introEyebrow}>Renewal Management Discovery</div>
+        <h1 className={styles.introTitle}>
+          Walk through the renewal system <em>together</em> on the call.
+        </h1>
+        <p className={styles.introSub}>
+          {totalCount} components across five layers — reporting, automation,
+          process, data, and team. One screen per component with discussion
+          prompts, notes, maturity assessment, and benchmarks. When you're done,
+          export the generated playbook and Teamwork tasks.
+        </p>
+
+        <div className={styles.introContextRow}>
+          <label className={styles.introLabel}>
+            <span>Client / Account</span>
+            <input
+              type="text"
+              placeholder="Acme Software"
+              value={context.clientName}
+              onChange={(e) => onContextChange("clientName", e.target.value)}
+              className={styles.introInput}
+            />
+          </label>
+          <label className={styles.introLabel}>
+            <span>ARR band (optional)</span>
+            <select
+              value={context.arrBand ?? ""}
+              onChange={(e) =>
+                onContextChange(
+                  "arrBand",
+                  (e.target.value || null) as typeof context.arrBand,
+                )
+              }
+              className={styles.introInput}
+            >
+              <option value="">Unknown</option>
+              <option value="under_1m">&lt; $1M</option>
+              <option value="1_5m">$1 – $5M</option>
+              <option value="5_10m">$5 – $10M</option>
+              <option value="10_25m">$10 – $25M</option>
+              <option value="25_50m">$25 – $50M</option>
+              <option value="50_plus_m">$50M+</option>
+            </select>
+          </label>
         </div>
-      </div>
-    </div>
+
+        <div className={styles.introFooter}>
+          <div className={styles.introFooterNote}>
+            {hiddenCount > 0 ? (
+              <span>
+                {visibleCount} active · {hiddenCount} marked not relevant
+              </span>
+            ) : (
+              <span>{totalCount} components to walk through</span>
+            )}
+          </div>
+          <button
+            className={`${styles.btn} ${styles.btnLime} ${styles.btnLg}`}
+            onClick={onBegin}
+          >
+            {hasProgress ? "Resume discovery →" : "Begin discovery →"}
+          </button>
+        </div>
+      </section>
+    </main>
   );
 }
 
-/* ============================ Impact scorecard (sidebar) ============================ */
+/* ============================ Component screen ============================ */
 
-function ImpactScorecard({
-  impact,
-  mode,
-}: {
-  impact: ReturnType<typeof computeChurnImpact>;
-  mode: Mode;
-}) {
-  const headline =
-    mode === "cro" ? "Revenue Impact" : "Live Churn Impact";
-  return (
-    <div className={styles.sidebarCard}>
-      <div className={styles.sidebarTitle}>
-        <span className={styles.livePulse} /> {headline}
-      </div>
-
-      <div className={styles.impactBig}>
-        <div className={styles.impactBigNum}>{impact.systemMaturity}</div>
-        <div className={styles.impactBigLabel}>
-          System maturity score
-          <span className={styles.impactBigSub}>(0–100)</span>
-        </div>
-        <div className={styles.systemBar}>
-          <div
-            className={styles.systemBarFill}
-            style={{ width: `${impact.systemMaturity}%` }}
-          />
-        </div>
-      </div>
-
-      <div className={styles.scoreRow}>
-        <span className={styles.scoreLabel}>GRR lift</span>
-        <span className={`${styles.scoreValue} ${styles.lift}`}>
-          +{impact.grrLiftPoints}pp
-        </span>
-      </div>
-      <div className={styles.scoreRow}>
-        <span className={styles.scoreLabel}>NRR lift</span>
-        <span className={`${styles.scoreValue} ${styles.lift}`}>
-          +{impact.projectedNrrLift}pp
-        </span>
-      </div>
-      <div className={styles.scoreRow}>
-        <span className={styles.scoreLabel}>ARR recovered</span>
-        <span className={`${styles.scoreValue} ${styles.lift}`}>
-          {formatCurrency(impact.arrSavedPerYear)}/yr
-        </span>
-      </div>
-      <div className={styles.scoreRow}>
-        <span className={styles.scoreLabel}>ARR expanded</span>
-        <span className={`${styles.scoreValue} ${styles.lift}`}>
-          {formatCurrency(impact.arrExpansionPerYear)}/yr
-        </span>
-      </div>
-      <div className={styles.scoreRow}>
-        <span className={styles.scoreLabel}>Surprise churn</span>
-        <span className={styles.scoreValue} style={{ fontSize: "1rem" }}>
-          <span className={styles.drop}>{impact.currentSurpriseChurn}%</span>
-          <span style={{ color: "var(--muted)", margin: "0 6px" }}>→</span>
-          <span className={styles.lift}>{impact.projectedSurpriseChurn}%</span>
-        </span>
-      </div>
-      <div className={styles.scoreFootnote}>
-        {impact.timeToRiskDetection}. Recalculates on every maturity change.
-      </div>
-    </div>
-  );
-}
-
-/* ============================ Top gaps card ============================ */
-
-function TopGapsCard({
-  state,
-  onTileClick,
-}: {
-  state: SystemState;
-  onTileClick: (id: string) => void;
-}) {
-  const gaps = rankGaps(state).slice(0, 5);
-  if (gaps.length === 0) return null;
-  return (
-    <div className={styles.sidebarCard}>
-      <div className={styles.sidebarTitle}>Top gaps by churn impact</div>
-      {gaps.map((g) => (
-        <button
-          key={g.component.id}
-          className={styles.gapRow}
-          onClick={() => onTileClick(g.component.id)}
-        >
-          <span className={`${styles.matDot} ${styles[`matDot-${g.current}`]}`} />
-          <span className={styles.gapRowName}>{g.component.name}</span>
-          <span className={styles.gapRowLift}>
-            +{g.liftAvailable.toFixed(1)}pp
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/* ============================ Diagnostic panel ============================ */
-
-function DiagnosticPanel({
+function ComponentScreen({
   component,
   maturity,
   note,
-  mode,
+  index,
+  total,
   dependencies,
-  onClose,
   onMaturityChange,
   onNoteChange,
+  onSkip,
+  onPrev,
+  onNext,
+  impact,
+  configuredCount,
+  visibleTotal,
 }: {
-  component: (typeof SYSTEM_COMPONENTS)[number];
+  component: SystemComponent;
   maturity: Maturity;
   note: string;
-  mode: Mode;
-  dependencies?: { id: string; name: string; maturity: Maturity }[];
-  onClose: () => void;
+  index: number;
+  total: number;
+  dependencies?: { id: string; name: string; maturity: Maturity; hidden: boolean }[];
   onMaturityChange: (m: Maturity) => void;
   onNoteChange: (n: string) => void;
+  onSkip: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+  impact: ReturnType<typeof computeChurnImpact>;
+  configuredCount: number;
+  visibleTotal: number;
 }) {
+  const progress = ((index + 1) / total) * 100;
+
   return (
-    <>
-      <div className={styles.panelBackdrop} onClick={onClose} />
-      <aside className={styles.panel}>
-        <div className={styles.panelHeader}>
+    <main className={styles.componentMain}>
+      <div className={styles.progressBar}>
+        <div className={styles.progressFill} style={{ width: `${progress}%` }} />
+      </div>
+
+      <section className={styles.componentCard}>
+        <div className={styles.componentHeader}>
           <div>
-            <div className={styles.panelEyebrow}>
-              {LAYER_LABELS[component.layer]} · Component
-            </div>
-            <h2 className={styles.panelTitle}>{component.name}</h2>
+            <div className={styles.layerBadge}>{LAYER_LABELS[component.layer]}</div>
+            <h1 className={styles.componentName}>{component.name}</h1>
+            <p className={styles.componentShort}>{component.shortDescription}</p>
           </div>
-          <button className={styles.panelClose} onClick={onClose}>
-            ✕
-          </button>
-        </div>
-
-        <div className={styles.panelSection}>
-          <p className={styles.panelDesc}>
-            {mode === "cro" && component.croFraming
-              ? component.croFraming
-              : component.description}
-          </p>
-          <div className={styles.panelWhyBlock}>
-            <b>Why it matters:</b> {component.whyItMatters}
+          <div className={styles.componentCount}>
+            <span className={styles.componentCountNum}>
+              {index + 1}
+              <span className={styles.componentCountTotal}>/ {total}</span>
+            </span>
+            <span className={styles.componentCountLabel}>Component</span>
           </div>
         </div>
 
-        <div className={styles.panelSection}>
-          <div className={styles.panelLabel}>Current maturity</div>
+        <Section label="Why this matters">
+          <p className={styles.sectionBody}>{component.whyItMatters}</p>
+          {component.croFraming && (
+            <p className={styles.componentCro}>{component.croFraming}</p>
+          )}
+        </Section>
+
+        <Section label="Discussion prompts">
+          <ul className={styles.prompts}>
+            {component.diagnosticQuestions.map((q, i) => (
+              <li key={i}>{q}</li>
+            ))}
+          </ul>
+        </Section>
+
+        <Section label="Notes from the call">
+          <textarea
+            className={styles.notes}
+            placeholder="Capture what you heard — current process, stakeholders, blockers, direct quotes..."
+            value={note}
+            onChange={(e) => onNoteChange(e.target.value)}
+          />
+        </Section>
+
+        <Section label="Current maturity">
           <div className={styles.maturitySelector}>
             {([0, 1, 2, 3, 4] as Maturity[]).map((m) => (
               <button
@@ -717,177 +459,492 @@ function DiagnosticPanel({
             ))}
           </div>
           <div className={styles.matDefinition}>
+            <b>Level {maturity} — {MATURITY_LABELS[maturity]}:</b>{" "}
             {component.maturityDefinitions[maturity]}
           </div>
-        </div>
+        </Section>
 
-        <div className={styles.panelSection}>
-          <div className={styles.panelLabel}>Benchmark</div>
-          <div className={styles.benchmarkBlock}>{component.benchmark}</div>
-        </div>
+        <Section label="Benchmark">
+          <div className={styles.benchmark}>{component.benchmark}</div>
+        </Section>
 
-        <div className={styles.panelSection}>
-          <div className={styles.panelLabel}>Diagnostic questions</div>
-          <ul className={styles.panelQuestions}>
-            {component.diagnosticQuestions.map((q, i) => (
-              <li key={i}>{q}</li>
-            ))}
-          </ul>
-        </div>
-
-        <div className={styles.panelSection}>
-          <div className={styles.panelLabel}>Recommended first action</div>
-          <div className={styles.panelAction}>{component.recommendedAction}</div>
-        </div>
+        <Section label="Recommended first action">
+          <div className={styles.recommendation}>{component.recommendedAction}</div>
+        </Section>
 
         {dependencies && dependencies.length > 0 && (
-          <div className={styles.panelSection}>
-            <div className={styles.panelLabel}>Depends on</div>
+          <Section label="Depends on">
             <div className={styles.depRow}>
               {dependencies.map((d) => (
                 <span
                   key={d.id}
-                  className={`${styles.depPill} ${styles[`depPill-${d.maturity === 0 ? "missing" : "ok"}`]}`}
+                  className={`${styles.depPill} ${d.maturity === 0 ? styles.depMissing : styles.depOk}`}
                 >
                   <span className={`${styles.matDot} ${styles[`matDot-${d.maturity}`]}`} />
                   {d.name}
+                  {d.hidden && <span className={styles.depHidden}>skipped</span>}
                 </span>
               ))}
             </div>
-          </div>
+          </Section>
         )}
 
-        <div className={styles.panelSection}>
-          <div className={styles.panelLabel}>Playbook excerpt</div>
-          <blockquote className={styles.panelQuote}>
+        <Section label="Playbook reference">
+          <blockquote className={styles.quote}>
             {component.playbookExcerpt}
           </blockquote>
+        </Section>
+
+        <div className={styles.componentNav}>
+          <button className={`${styles.btn} ${styles.btnGhost}`} onClick={onPrev}>
+            ← Previous
+          </button>
+          <button className={`${styles.btn} ${styles.btnMuted}`} onClick={onSkip}>
+            Not relevant — skip
+          </button>
+          <button className={`${styles.btn} ${styles.btnLime}`} onClick={onNext}>
+            {index === total - 1 ? "Finish discovery →" : "Next →"}
+          </button>
+        </div>
+      </section>
+
+      <ImpactFooter
+        impact={impact}
+        configured={configuredCount}
+        total={visibleTotal}
+      />
+    </main>
+  );
+}
+
+function Section({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionLabel}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
+/* ============================ Impact footer ============================ */
+
+function ImpactFooter({
+  impact,
+  configured,
+  total,
+}: {
+  impact: ReturnType<typeof computeChurnImpact>;
+  configured: number;
+  total: number;
+}) {
+  return (
+    <section className={styles.impactFooter}>
+      <div className={styles.impactFooterLabel}>
+        <span className={styles.livePulse} />
+        Live impact
+      </div>
+      <div className={styles.impactMetrics}>
+        <div className={styles.impactMetric}>
+          <div className={styles.impactMetricNum}>{impact.systemMaturity}</div>
+          <div className={styles.impactMetricLabel}>System maturity</div>
+        </div>
+        <div className={styles.impactMetric}>
+          <div className={`${styles.impactMetricNum} ${styles.lift}`}>
+            +{impact.grrLiftPoints}pp
+          </div>
+          <div className={styles.impactMetricLabel}>GRR lift</div>
+        </div>
+        <div className={styles.impactMetric}>
+          <div className={`${styles.impactMetricNum} ${styles.lift}`}>
+            +{impact.projectedNrrLift}pp
+          </div>
+          <div className={styles.impactMetricLabel}>NRR lift</div>
+        </div>
+        <div className={styles.impactMetric}>
+          <div className={styles.impactMetricNum}>
+            {configured}/{total}
+          </div>
+          <div className={styles.impactMetricLabel}>Configured</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ============================ Component menu (drawer) ============================ */
+
+function ComponentMenu({
+  state,
+  onClose,
+  onJump,
+  onToggleHidden,
+  onGoSummary,
+  onGoIntro,
+}: {
+  state: SystemState;
+  onClose: () => void;
+  onJump: (idx: number) => void;
+  onToggleHidden: (id: string) => void;
+  onGoSummary: () => void;
+  onGoIntro: () => void;
+}) {
+  const visible = SYSTEM_COMPONENTS.filter((c) => !state.hidden.includes(c.id));
+  return (
+    <>
+      <div className={styles.menuBackdrop} onClick={onClose} />
+      <aside className={styles.menu}>
+        <div className={styles.menuHeader}>
+          <div className={styles.menuTitle}>Components</div>
+          <button className={styles.menuClose} onClick={onClose}>
+            ✕
+          </button>
         </div>
 
-        {mode !== "cro" && (
-          <div className={styles.panelSection}>
-            <div className={styles.panelLabel}>Architect / workshop notes</div>
-            <textarea
-              className={styles.panelNotes}
-              placeholder="Capture observations from the live session — current process, stakeholders, blockers, quotes..."
-              value={note}
-              onChange={(e) => onNoteChange(e.target.value)}
-            />
-          </div>
+        <div className={styles.menuMeta}>
+          <span>
+            {visible.length} active · {state.hidden.length} skipped
+          </span>
+        </div>
+
+        <div className={styles.menuActions}>
+          <button className={`${styles.btn} ${styles.btnGhost}`} onClick={onGoIntro}>
+            ← Start over
+          </button>
+          <button className={`${styles.btn} ${styles.btnLime}`} onClick={onGoSummary}>
+            View summary →
+          </button>
+        </div>
+
+        <div className={styles.menuList}>
+          {visible.map((comp, idx) => {
+            const m = state.components[comp.id] ?? 0;
+            const hasNote = !!state.notes[comp.id]?.trim();
+            return (
+              <button
+                key={comp.id}
+                className={styles.menuItem}
+                onClick={() => onJump(idx)}
+              >
+                <span className={`${styles.matDot} ${styles[`matDot-${m}`]}`} />
+                <div className={styles.menuItemBody}>
+                  <div className={styles.menuItemName}>{comp.name}</div>
+                  <div className={styles.menuItemLayer}>
+                    {LAYER_LABELS[comp.layer]} · Level {m}
+                    {hasNote && <span className={styles.menuItemNote}> · has notes</span>}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {state.hidden.length > 0 && (
+          <>
+            <div className={styles.menuSectionLabel}>Not relevant</div>
+            <div className={styles.menuList}>
+              {state.hidden
+                .map((id) => COMPONENT_INDEX[id])
+                .filter(Boolean)
+                .map((comp) => (
+                  <button
+                    key={comp.id}
+                    className={`${styles.menuItem} ${styles.menuItemHidden}`}
+                    onClick={() => onToggleHidden(comp.id)}
+                  >
+                    <div className={styles.menuItemBody}>
+                      <div className={styles.menuItemName}>{comp.name}</div>
+                      <div className={styles.menuItemLayer}>
+                        {LAYER_LABELS[comp.layer]} · click to restore
+                      </div>
+                    </div>
+                  </button>
+                ))}
+            </div>
+          </>
         )}
       </aside>
     </>
   );
 }
 
-/* ============================ Connect modal ============================ */
+/* ============================ Summary screen ============================ */
 
-function ConnectModal({
-  scanning,
-  result,
-  onClose,
+function SummaryScreen({
+  plan,
+  state,
+  visibleCount,
+  hiddenCount,
+  onViewPlaybook,
+  onBackToComponent,
 }: {
-  scanning: boolean;
-  result: typeof MOCK_HUBSPOT_SCAN | null;
-  onClose: () => void;
+  plan: Plan;
+  state: SystemState;
+  visibleCount: number;
+  hiddenCount: number;
+  onViewPlaybook: () => void;
+  onBackToComponent: (index: number) => void;
 }) {
+  const gaps = rankGaps(state).slice(0, 5);
+  const configured = Object.entries(state.components).filter(
+    ([id, m]) => m > 0 && !state.hidden.includes(id),
+  ).length;
+  const notedCount = Object.entries(state.notes).filter(
+    ([id, n]) => n?.trim() && !state.hidden.includes(id),
+  ).length;
+
+  const [showTasks, setShowTasks] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
+
+  const tasks = generateTeamworkTasks(plan, state);
+  const tasksMd = formatTasksAsMarkdown(tasks);
+  const notesMd = formatDiscoveryNotes(state);
+
   return (
-    <>
-      <div className={styles.panelBackdrop} onClick={scanning ? undefined : onClose} />
-      <div className={styles.connectModal}>
-        {scanning ? (
-          <div className={styles.scanning}>
-            <div className={styles.scanSpinner} />
-            <div className={styles.scanTitle}>Scanning HubSpot portal…</div>
-            <div className={styles.scanSub}>
-              Reading workflows, deal properties, pipeline stages, and
-              integrations
-            </div>
-            <div className={styles.scanSteps}>
-              <div>✓ Authenticating</div>
-              <div>✓ Reading workflows (47 found)</div>
-              <div>✓ Reading deal properties (18 found)</div>
-              <div>… Inferring component maturity</div>
-            </div>
-          </div>
-        ) : result ? (
-          <div className={styles.scanResult}>
-            <div className={styles.scanEyebrow}>Scan complete</div>
-            <h2 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "var(--space-2)" }}>
-              {result.portal}
-            </h2>
-            <div className={styles.scanFindings}>
-              <div>
-                <b>{result.findings.workflows}</b> workflows
-              </div>
-              <div>
-                <b>{result.findings.renewalWorkflows}</b> renewal-related
-              </div>
-              <div>
-                <b>{result.findings.dealProperties}</b> deal properties
-              </div>
-              <div>
-                <b>{result.findings.integrations.length}</b> integrations
-              </div>
-            </div>
+    <main className={styles.summaryMain}>
+      <section className={styles.summaryHeader}>
+        <div>
+          <div className={styles.summaryEyebrow}>Discovery complete</div>
+          <h1 className={styles.summaryTitle}>
+            {state.context.clientName || "Your client"}'s retention blueprint.
+          </h1>
+          <p className={styles.summarySub}>
+            {configured} components configured, {notedCount} with captured notes,{" "}
+            {hiddenCount} skipped. Generate the playbook and Teamwork tasks
+            below.
+          </p>
+        </div>
+      </section>
 
-            <div className={styles.panelLabel} style={{ marginTop: "var(--space-5)" }}>
-              Detected gaps
-            </div>
-            <ul className={styles.scanGaps}>
-              {result.detectedGaps.map((g, i) => (
-                <li key={i}>{g}</li>
-              ))}
-            </ul>
-
-            <div style={{ marginTop: "var(--space-5)", textAlign: "right" }}>
-              <button
-                className={`${styles.btn} ${styles.btnPrimary} ${styles.btnLg}`}
-                onClick={onClose}
-              >
-                Apply to canvas →
-              </button>
-            </div>
-          </div>
-        ) : null}
+      <div className={styles.summaryStats}>
+        <StatCard
+          label="System Maturity"
+          value={`${plan.impact.systemMaturity}`}
+          sub="out of 100"
+        />
+        <StatCard
+          label="GRR Lift"
+          value={`+${plan.impact.grrLiftPoints}pp`}
+          sub={`${plan.impact.currentGrr}% → ${plan.impact.projectedGrr}%`}
+          accent="retained"
+        />
+        <StatCard
+          label="NRR Lift"
+          value={`+${plan.impact.projectedNrrLift}pp`}
+          sub="from expansion motion"
+          accent="retained"
+        />
+        <StatCard
+          label="ARR Unlocked / Year"
+          value={formatCurrency(
+            plan.impact.arrSavedPerYear + plan.impact.arrExpansionPerYear,
+          )}
+          sub={`Saved + expanded, base ${formatCurrency(plan.impact.estimatedArr)}`}
+          accent="retained"
+        />
       </div>
-    </>
+
+      <section className={styles.summaryCard}>
+        <div className={styles.cardTitle}>Top priority gaps</div>
+        <div className={styles.cardSub}>
+          Ranked by churn impact. Click any to revisit the discovery screen.
+        </div>
+        {gaps.length === 0 && (
+          <p style={{ color: "var(--muted)" }}>No gaps found — system at full maturity.</p>
+        )}
+        {gaps.map((g) => {
+          const visible = SYSTEM_COMPONENTS.filter((c) => !state.hidden.includes(c.id));
+          const compIndex = visible.findIndex((c) => c.id === g.component.id);
+          return (
+            <button
+              key={g.component.id}
+              className={styles.gapRow}
+              onClick={() => compIndex >= 0 && onBackToComponent(compIndex)}
+              disabled={compIndex < 0}
+            >
+              <div className={styles.gapImpactSmall}>
+                +{g.liftAvailable.toFixed(1)}
+                <span>pp</span>
+              </div>
+              <div>
+                <div className={styles.gapRowName}>{g.component.name}</div>
+                <div className={styles.gapRowLayer}>
+                  {LAYER_LABELS[g.component.layer]} · Current level {g.current}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </section>
+
+      <section className={styles.summaryCard}>
+        <div className={styles.exportRow}>
+          <div>
+            <div className={styles.cardTitle}>Deliverables</div>
+            <div className={styles.cardSub}>
+              Three outputs from one discovery call.
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.deliverables}>
+          <DeliverableCard
+            title="Implementation Playbook"
+            description="Approach, gaps, health score design, cadence, playbooks, routing, automations, 4-phase roadmap, success metrics."
+            action="View playbook →"
+            onClick={onViewPlaybook}
+          />
+          <DeliverableCard
+            title="Teamwork Tasks"
+            description={`${tasks.length} tasks across phased lists, ready to import.`}
+            action={showTasks ? "Hide preview" : "Preview tasks →"}
+            onClick={() => setShowTasks((s) => !s)}
+          />
+          <DeliverableCard
+            title="Discovery Notes"
+            description={`${notedCount} components with notes captured on the call.`}
+            action={showNotes ? "Hide notes" : "View notes →"}
+            onClick={() => setShowNotes((s) => !s)}
+          />
+        </div>
+
+        {showTasks && (
+          <ExportPanel
+            content={tasksMd}
+            filename={`${(state.context.clientName || "client").toLowerCase().replace(/\s+/g, "-")}-teamwork-tasks.md`}
+          />
+        )}
+        {showNotes && (
+          <ExportPanel
+            content={notesMd}
+            filename={`${(state.context.clientName || "client").toLowerCase().replace(/\s+/g, "-")}-discovery-notes.md`}
+          />
+        )}
+      </section>
+
+      <div className={styles.btnRow}>
+        <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
+          {visibleCount} components covered · recalculates as you adjust
+        </span>
+        <button
+          className={`${styles.btn} ${styles.btnLime} ${styles.btnLg}`}
+          onClick={onViewPlaybook}
+        >
+          View full playbook →
+        </button>
+      </div>
+    </main>
   );
 }
 
-/* ============================ Plan / Build / Complete outputs ============================ */
-
-function PlanOutput({
-  plan,
-  mode,
-  onContinue,
+function StatCard({
+  label,
+  value,
+  sub,
+  accent,
 }: {
-  plan: Plan;
-  mode: Mode;
-  onContinue: () => void;
+  label: string;
+  value: string;
+  sub?: string;
+  accent?: "retained" | "risk";
 }) {
   return (
-    <main className={styles.outputMain}>
+    <div className={`${styles.statCard} ${accent ? styles[`statCard-${accent}`] : ""}`}>
+      <div className={styles.statLabel}>{label}</div>
+      <div className={styles.statValue}>{value}</div>
+      {sub && <div className={styles.statSub}>{sub}</div>}
+    </div>
+  );
+}
+
+function DeliverableCard({
+  title,
+  description,
+  action,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  action: string;
+  onClick: () => void;
+}) {
+  return (
+    <div className={styles.deliverable}>
+      <div className={styles.deliverableTitle}>{title}</div>
+      <div className={styles.deliverableDesc}>{description}</div>
+      <button className={`${styles.btn} ${styles.btnGhost}`} onClick={onClick}>
+        {action}
+      </button>
+    </div>
+  );
+}
+
+function ExportPanel({ content, filename }: { content: string; filename: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  };
+  const download = () => {
+    const blob = new Blob([content], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div className={styles.exportPanel}>
+      <div className={styles.exportActions}>
+        <button className={`${styles.btn} ${styles.btnGhost}`} onClick={copy}>
+          {copied ? "✓ Copied" : "Copy markdown"}
+        </button>
+        <button className={`${styles.btn} ${styles.btnGhost}`} onClick={download}>
+          Download .md
+        </button>
+      </div>
+      <pre className={styles.exportPre}>{content}</pre>
+    </div>
+  );
+}
+
+/* ============================ Playbook screen ============================ */
+
+function PlaybookScreen({
+  plan,
+  onBack,
+}: {
+  plan: Plan;
+  onBack: () => void;
+}) {
+  return (
+    <main className={styles.playbookMain}>
       <section className={styles.planHeader}>
         <div>
           <div style={{ fontSize: "var(--text-xs)", letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--ls-lime)", fontWeight: 700, marginBottom: 6 }}>
-            {mode === "cro" ? "Your Retention Blueprint" : "Retention Engine Playbook"}
+            Implementation Playbook
           </div>
           <div style={{ fontSize: "var(--text-2xl)", fontWeight: 800, letterSpacing: "-0.02em" }}>
-            {mode === "cro"
-              ? "Here's the growth your system can unlock"
-              : "Generated plan — churn impact forecast"}
+            Generated from discovery
           </div>
         </div>
         <div style={{ display: "flex", gap: "var(--space-2)" }}>
-          <button
-            className={`${styles.btn} ${styles.btnGhostDark} no-print`}
-            onClick={() => window.print()}
-          >
+          <button className={`${styles.btn} ${styles.btnGhost} no-print`} onClick={() => window.print()}>
             Print / PDF
           </button>
-          <button className={`${styles.btn} ${styles.btnLime} ${styles.btnLg} no-print`} onClick={onContinue}>
-            Continue to Build →
+          <button className={`${styles.btn} ${styles.btnGhost} no-print`} onClick={onBack}>
+            ← Summary
           </button>
         </div>
       </section>
@@ -903,57 +960,49 @@ function PlanOutput({
           </div>
         </div>
         <div className={`${styles.planStat} ${styles.retained}`}>
-          <div className={styles.planStatLabel}>ARR Recovered / Year</div>
+          <div className={styles.planStatLabel}>ARR Recovered</div>
           <div className={styles.planStatValue} style={{ color: "var(--retained)" }}>
             {formatCurrency(plan.impact.arrSavedPerYear)}
           </div>
-          <div className={styles.planStatSub}>
-            Assumes {formatCurrency(plan.impact.estimatedArr)} ARR base
-          </div>
+          <div className={styles.planStatSub}>per year</div>
         </div>
         <div className={`${styles.planStat} ${styles.retained}`}>
-          <div className={styles.planStatLabel}>ARR Expansion / Year</div>
+          <div className={styles.planStatLabel}>ARR Expansion</div>
           <div className={styles.planStatValue} style={{ color: "var(--retained)" }}>
             {formatCurrency(plan.impact.arrExpansionPerYear)}
           </div>
-          <div className={styles.planStatSub}>NRR lift +{plan.impact.projectedNrrLift}pp</div>
+          <div className={styles.planStatSub}>
+            NRR +{plan.impact.projectedNrrLift}pp
+          </div>
         </div>
         <div className={`${styles.planStat} ${styles.risk}`}>
           <div className={styles.planStatLabel}>Surprise Churn</div>
           <div className={styles.planStatValue}>
             {plan.impact.currentSurpriseChurn}% →{" "}
-            <span style={{ color: "var(--retained)" }}>
-              {plan.impact.projectedSurpriseChurn}%
-            </span>
+            <span style={{ color: "var(--retained)" }}>{plan.impact.projectedSurpriseChurn}%</span>
           </div>
-          <div className={styles.planStatSub}>Churn flagged in advance</div>
+          <div className={styles.planStatSub}>flagged in advance</div>
         </div>
       </div>
 
-      <section className={styles.card}>
+      <section className={styles.summaryCard}>
         <div className={styles.sectionLabel}>Recommended approach</div>
         <div className={styles.approach}>
           <div className={styles.approachBadge}>
-            {plan.approach === "cs_platform"
-              ? "CS Platform"
-              : plan.approach === "hybrid"
-                ? "Hybrid"
-                : "CRM-Native"}
+            {plan.approach === "cs_platform" ? "CS Platform" : plan.approach === "hybrid" ? "Hybrid" : "CRM-Native"}
           </div>
           <div style={{ lineHeight: 1.6 }}>{plan.approachRationale}</div>
         </div>
       </section>
 
-      <section className={styles.card}>
-        <div className={styles.cardTitle}>Priority gaps to close</div>
-        <div className={styles.cardSub}>
-          Ranked by churn impact. Top 3 typically capture 70% of the lift.
-        </div>
+      <section className={styles.summaryCard}>
+        <div className={styles.cardTitle}>Priority gaps</div>
+        <div className={styles.cardSub}>Ranked by churn impact.</div>
         {plan.gaps.map((g) => (
           <div key={g.id} className={styles.gap}>
             <div className={styles.gapImpact}>
               <span className={styles.pp}>+{g.churnImpactPoints}</span>
-              <span className={styles.ppLabel}>pp GRR</span>
+              <span className={styles.ppLabel}>pp</span>
             </div>
             <div>
               <div className={styles.gapTitle}>{g.title}</div>
@@ -966,19 +1015,14 @@ function PlanOutput({
         ))}
       </section>
 
-      <section className={styles.card}>
+      <section className={styles.summaryCard}>
         <div className={styles.cardTitle}>Health score design</div>
         <div className={styles.cardSub}>
-          Weighted composite. Green / yellow / red thresholds drive routing.
+          Weighted composite. Green / yellow / red drive routing.
         </div>
         <table className={styles.signalTable}>
           <thead>
-            <tr>
-              <th>Signal</th>
-              <th>Weight</th>
-              <th>Source</th>
-              <th>Availability</th>
-            </tr>
+            <tr><th>Signal</th><th>Weight</th><th>Source</th><th>Availability</th></tr>
           </thead>
           <tbody>
             {plan.healthDesign.signals.map((s) => (
@@ -1013,7 +1057,7 @@ function PlanOutput({
         </div>
       </section>
 
-      <section className={styles.card}>
+      <section className={styles.summaryCard}>
         <div className={styles.cardTitle}>90 / 60 / 30-day cadence</div>
         <div className={styles.cardSub}>{plan.staging.ownerModel}</div>
         <div className={styles.cadence}>
@@ -1031,11 +1075,8 @@ function PlanOutput({
         </div>
       </section>
 
-      <section className={styles.card}>
+      <section className={styles.summaryCard}>
         <div className={styles.cardTitle}>Playbooks</div>
-        <div className={styles.cardSub}>
-          Documented motions with triggers, steps, and owner.
-        </div>
         <div className={styles.playbooks}>
           {plan.playbooks.map((pb) => (
             <div key={pb.id} className={styles.playbook}>
@@ -1043,15 +1084,11 @@ function PlanOutput({
               <div className={styles.playbookGoal}>{pb.goal}</div>
               <div className={styles.playbookLabel}>Triggers</div>
               <ul className={styles.playbookList}>
-                {pb.triggers.map((t, i) => (
-                  <li key={i}>{t}</li>
-                ))}
+                {pb.triggers.map((t, i) => <li key={i}>{t}</li>)}
               </ul>
               <div className={styles.playbookLabel}>Steps</div>
               <ol className={styles.playbookList}>
-                {pb.steps.map((s, i) => (
-                  <li key={i}>{s}</li>
-                ))}
+                {pb.steps.map((s, i) => <li key={i}>{s}</li>)}
               </ol>
               <div className={styles.playbookOwner}>
                 Owner: <b>{pb.owner}</b>
@@ -1061,45 +1098,57 @@ function PlanOutput({
         </div>
       </section>
 
-      <section className={styles.card}>
+      <section className={styles.summaryCard}>
         <div className={styles.cardTitle}>CSM routing rules</div>
         <ul className={styles.routingList}>
-          {plan.routingRules.map((r, i) => (
-            <li key={i}>{r}</li>
-          ))}
+          {plan.routingRules.map((r, i) => <li key={i}>{r}</li>)}
         </ul>
       </section>
 
-      <section className={styles.card}>
+      <section className={styles.summaryCard}>
         <div className={styles.cardTitle}>Process automations</div>
-        <div className={styles.cardSub}>
-          Specific workflows — tailored to your CRM of record.
-        </div>
+        <div className={styles.cardSub}>Tailored to the CRM of record.</div>
         {plan.automations.map((a) => (
           <div key={a.name} className={styles.automation}>
             <div className={styles.automationHeader}>
               <span className={styles.automationName}>{a.name}</span>
               <span className={styles.systemBadge}>{a.system}</span>
             </div>
-            <div className={styles.automationField}>
-              <b>Trigger</b> {a.trigger}
-            </div>
-            <div className={styles.automationField}>
-              <b>Action</b> {a.action}
-            </div>
-            <div className={styles.automationField}>
-              <b>Recipient</b> {a.recipient}
-            </div>
+            <div className={styles.automationField}><b>Trigger</b> {a.trigger}</div>
+            <div className={styles.automationField}><b>Action</b> {a.action}</div>
+            <div className={styles.automationField}><b>Recipient</b> {a.recipient}</div>
           </div>
         ))}
       </section>
 
-      <section className={styles.card}>
+      <section className={styles.summaryCard}>
+        <div className={styles.cardTitle}>4-phase implementation</div>
+        <div className={styles.cardSub}>Typically 60-100 hours end to end.</div>
+        {plan.phases.map((phase) => (
+          <div key={phase.id} className={styles.phaseSummary}>
+            <div className={styles.phaseSummaryHeader}>
+              <span className={styles.phaseSummaryName}>{phase.name}</span>
+              <span className={styles.phaseHours}>{phase.hours[0]}–{phase.hours[1]} hrs</span>
+            </div>
+            <div className={styles.phaseMilestone}>
+              <b>Milestone:</b> {phase.expectedMilestone}
+            </div>
+            <ul className={styles.phaseSummaryTasks}>
+              {phase.tasks.map((t) => (
+                <li key={t.id}>
+                  <span>{t.label}</span>
+                  <span className={styles.phaseTaskMeta}>
+                    {t.owner} · {t.hours}h
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </section>
+
+      <section className={styles.summaryCard}>
         <div className={styles.cardTitle}>Success metrics</div>
-        <div className={styles.cardSub}>
-          Instrument on day one. Leading indicators measure usage; lagging
-          indicators measure outcome.
-        </div>
         <div className={styles.metricGrid}>
           {plan.successMetrics.map((m, i) => (
             <div key={i} className={styles.metric}>
@@ -1115,155 +1164,10 @@ function PlanOutput({
       </section>
 
       <div className={styles.btnRow}>
-        <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-          Plan generated from canvas state. Continue to build it step by step.
-        </span>
-        <button
-          className={`${styles.btn} ${styles.btnPrimary} ${styles.btnLg} no-print`}
-          onClick={onContinue}
-        >
-          Continue to Build →
+        <button className={`${styles.btn} ${styles.btnGhost}`} onClick={onBack}>
+          ← Back to summary
         </button>
       </div>
-    </main>
-  );
-}
-
-function BuildOutput({
-  plan,
-  tasksDone,
-  onToggle,
-  onComplete,
-  canComplete,
-}: {
-  plan: Plan;
-  tasksDone: Record<string, boolean>;
-  onToggle: (id: string) => void;
-  onComplete: () => void;
-  canComplete: boolean;
-}) {
-  const total = plan.phases.reduce((acc, p) => acc + p.tasks.length, 0);
-  const done = plan.phases
-    .flatMap((p) => p.tasks)
-    .filter((t) => tasksDone[t.id]).length;
-
-  return (
-    <main className={styles.outputMain}>
-      <section className={styles.card}>
-        <div className={styles.cardTitle}>Implementation roadmap</div>
-        <div className={styles.cardSub}>
-          Four phases, typically 60–100 hours end-to-end.
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "var(--space-3)" }}>
-          <div style={{ fontWeight: 700, color: "var(--ls-purple)" }}>
-            {done} / {total} tasks complete
-          </div>
-          <div style={{ fontSize: "var(--text-sm)", color: "var(--muted)" }}>
-            {Math.round((done / total) * 100)}% done
-          </div>
-        </div>
-        <div className={styles.phaseProgress} style={{ marginTop: "var(--space-3)" }}>
-          <div className={styles.phaseProgressFill} style={{ width: `${(done / total) * 100}%` }} />
-        </div>
-      </section>
-
-      {plan.phases.map((phase) => {
-        const phaseDone = phase.tasks.filter((t) => tasksDone[t.id]).length;
-        const phasePct = (phaseDone / phase.tasks.length) * 100;
-        return (
-          <section key={phase.id} className={styles.phase}>
-            <div className={styles.phaseHeader}>
-              <div className={styles.phaseMeta}>
-                <span className={styles.phaseName}>{phase.name}</span>
-                <span className={styles.phaseHours}>
-                  {phase.hours[0]}–{phase.hours[1]} hrs
-                </span>
-              </div>
-              <div style={{ fontSize: "var(--text-xs)", color: "var(--muted)", fontWeight: 600 }}>
-                {phaseDone}/{phase.tasks.length} done
-              </div>
-            </div>
-            <div className={styles.phaseMilestone}>
-              <b>Expected milestone:</b> {phase.expectedMilestone}
-            </div>
-            {phase.tasks.map((task) => (
-              <div
-                key={task.id}
-                className={`${styles.task} ${tasksDone[task.id] ? styles.done : ""}`}
-                onClick={() => onToggle(task.id)}
-              >
-                <div className={`${styles.checkbox} ${tasksDone[task.id] ? styles.checked : ""}`}>
-                  {tasksDone[task.id] && "✓"}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div className={styles.taskLabel}>{task.label}</div>
-                  <div className={styles.taskMeta}>
-                    <span>
-                      <b style={{ color: "var(--ink)" }}>{task.owner}</b>
-                    </span>
-                    <span>· {task.hours} hrs</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-            <div className={styles.phaseProgress}>
-              <div className={styles.phaseProgressFill} style={{ width: `${phasePct}%` }} />
-            </div>
-          </section>
-        );
-      })}
-
-      <div className={styles.btnRow}>
-        <span style={{ color: "var(--muted)", fontSize: "var(--text-sm)" }}>
-          {canComplete ? "All tasks complete." : `${total - done} remaining.`}
-        </span>
-        <button
-          className={`${styles.btn} ${styles.btnLime} ${styles.btnLg}`}
-          onClick={onComplete}
-          disabled={!canComplete}
-        >
-          Complete engagement →
-        </button>
-      </div>
-    </main>
-  );
-}
-
-function CompleteOutput({
-  plan,
-  onBackToCanvas,
-}: {
-  plan: Plan;
-  onBackToCanvas: () => void;
-}) {
-  return (
-    <main className={styles.outputMain}>
-      <section className={styles.completeWrap}>
-        <div className={styles.completeEyebrow}>Engagement Complete</div>
-        <h1 className={styles.completeTitle}>The retention engine is live.</h1>
-        <p className={styles.completeSub}>
-          Projected GRR lift of <b>+{plan.impact.grrLiftPoints}pp</b> and NRR lift of{" "}
-          <b>+{plan.impact.projectedNrrLift}pp</b> — approximately{" "}
-          <b>{formatCurrency(plan.impact.arrSavedPerYear + plan.impact.arrExpansionPerYear)}</b>{" "}
-          in recurring revenue unlocked per year. Surprise churn cut from{" "}
-          <b>{plan.impact.currentSurpriseChurn}%</b> to{" "}
-          <b>{plan.impact.projectedSurpriseChurn}%</b>.
-        </p>
-        <div className={styles.completeActions}>
-          <button
-            className={`${styles.btn} ${styles.btnLime} ${styles.btnLg}`}
-            onClick={() => window.print()}
-          >
-            Print / Save as PDF
-          </button>
-          <button
-            className={`${styles.btn} ${styles.btnGhostDark} ${styles.btnLg}`}
-            onClick={onBackToCanvas}
-          >
-            Back to canvas
-          </button>
-        </div>
-      </section>
     </main>
   );
 }
@@ -1271,7 +1175,7 @@ function CompleteOutput({
 /* ============================ Confetti ============================ */
 
 function Confetti() {
-  const colors = ["#e8ffcf", "#d9afd0", "#642585", "#fbbf24", "#059669", "#fff"];
+  const colors = ["#c5f59d", "#d9afd0", "#6b3d77", "#fbbf24", "#10b981", "#fff"];
   const pieces = Array.from({ length: 80 }, (_, i) => ({
     id: i,
     left: Math.random() * 100,
