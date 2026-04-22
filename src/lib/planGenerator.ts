@@ -1,4 +1,5 @@
 import { computeChurnImpact } from "./churnImpact";
+import { systemStateToBlueprint } from "./stateAdapter";
 import type {
   Approach,
   AutomationSpec,
@@ -8,6 +9,7 @@ import type {
   Plan,
   Playbook,
   PriorityGap,
+  SystemState,
 } from "./types";
 
 function recommendApproach(blueprint: Blueprint): {
@@ -547,8 +549,9 @@ function buildPhases(blueprint: Blueprint, approach: Approach): Phase[] {
   ];
 }
 
-export function generatePlan(blueprint: Blueprint): Plan {
-  const impact = computeChurnImpact(blueprint);
+export function generatePlan(state: SystemState): Plan {
+  const blueprint = systemStateToBlueprint(state);
+  const impact = computeChurnImpact(state);
   const { approach, rationale } = recommendApproach(blueprint);
 
   return {
