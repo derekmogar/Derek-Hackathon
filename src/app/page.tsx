@@ -421,79 +421,72 @@ function ComponentScreen({
           </div>
         </div>
 
-        <Section label="Why this matters">
-          <p className={styles.sectionBody}>{component.whyItMatters}</p>
-          {component.croFraming && (
-            <p className={styles.componentCro}>{component.croFraming}</p>
-          )}
-        </Section>
+        <div className={styles.componentGrid}>
+          <div className={styles.componentLeft}>
+            <Section label="Current maturity">
+              <div className={styles.maturitySelector}>
+                {([0, 1, 2, 3, 4] as Maturity[]).map((m) => (
+                  <button
+                    key={m}
+                    className={`${styles.matButton} ${styles[`matButton-${m}`]} ${maturity === m ? styles.matButtonActive : ""}`}
+                    onClick={() => onMaturityChange(m)}
+                  >
+                    <div className={styles.matButtonNum}>{m}</div>
+                    <div className={styles.matButtonName}>{MATURITY_LABELS[m]}</div>
+                  </button>
+                ))}
+              </div>
+              <div className={styles.matDefinition}>
+                <b>Level {maturity} — {MATURITY_LABELS[maturity]}:</b>{" "}
+                {component.maturityDefinitions[maturity]}
+              </div>
+            </Section>
 
-        <Section label="Discussion prompts">
-          <ul className={styles.prompts}>
-            {component.diagnosticQuestions.map((q, i) => (
-              <li key={i}>{q}</li>
-            ))}
-          </ul>
-        </Section>
+            <Section label="Why this matters">
+              <p className={styles.sectionBody}>{component.whyItMatters}</p>
+            </Section>
 
-        <Section label="Notes from the call">
-          <textarea
-            className={styles.notes}
-            placeholder="Capture what you heard — current process, stakeholders, blockers, direct quotes..."
-            value={note}
-            onChange={(e) => onNoteChange(e.target.value)}
-          />
-        </Section>
+            <Section label="Benchmark">
+              <div className={styles.benchmark}>{component.benchmark}</div>
+            </Section>
 
-        <Section label="Current maturity">
-          <div className={styles.maturitySelector}>
-            {([0, 1, 2, 3, 4] as Maturity[]).map((m) => (
-              <button
-                key={m}
-                className={`${styles.matButton} ${styles[`matButton-${m}`]} ${maturity === m ? styles.matButtonActive : ""}`}
-                onClick={() => onMaturityChange(m)}
-              >
-                <div className={styles.matButtonNum}>{m}</div>
-                <div className={styles.matButtonName}>{MATURITY_LABELS[m]}</div>
-              </button>
-            ))}
+            {dependencies && dependencies.length > 0 && (
+              <Section label="Depends on">
+                <div className={styles.depRow}>
+                  {dependencies.map((d) => (
+                    <span
+                      key={d.id}
+                      className={`${styles.depPill} ${d.maturity === 0 ? styles.depMissing : styles.depOk}`}
+                    >
+                      <span className={`${styles.matDot} ${styles[`matDot-${d.maturity}`]}`} />
+                      {d.name}
+                      {d.hidden && <span className={styles.depHidden}>skipped</span>}
+                    </span>
+                  ))}
+                </div>
+              </Section>
+            )}
           </div>
-          <div className={styles.matDefinition}>
-            <b>Level {maturity} — {MATURITY_LABELS[maturity]}:</b>{" "}
-            {component.maturityDefinitions[maturity]}
+
+          <div className={styles.componentRight}>
+            <Section label="Discussion prompts">
+              <ul className={styles.prompts}>
+                {component.diagnosticQuestions.map((q, i) => (
+                  <li key={i}>{q}</li>
+                ))}
+              </ul>
+            </Section>
+
+            <Section label="Notes from the call">
+              <textarea
+                className={styles.notes}
+                placeholder="Capture what you heard — current process, stakeholders, blockers..."
+                value={note}
+                onChange={(e) => onNoteChange(e.target.value)}
+              />
+            </Section>
           </div>
-        </Section>
-
-        <Section label="Benchmark">
-          <div className={styles.benchmark}>{component.benchmark}</div>
-        </Section>
-
-        <Section label="Recommended first action">
-          <div className={styles.recommendation}>{component.recommendedAction}</div>
-        </Section>
-
-        {dependencies && dependencies.length > 0 && (
-          <Section label="Depends on">
-            <div className={styles.depRow}>
-              {dependencies.map((d) => (
-                <span
-                  key={d.id}
-                  className={`${styles.depPill} ${d.maturity === 0 ? styles.depMissing : styles.depOk}`}
-                >
-                  <span className={`${styles.matDot} ${styles[`matDot-${d.maturity}`]}`} />
-                  {d.name}
-                  {d.hidden && <span className={styles.depHidden}>skipped</span>}
-                </span>
-              ))}
-            </div>
-          </Section>
-        )}
-
-        <Section label="Playbook reference">
-          <blockquote className={styles.quote}>
-            {component.playbookExcerpt}
-          </blockquote>
-        </Section>
+        </div>
 
         <div className={styles.componentNav}>
           <button className={`${styles.btn} ${styles.btnGhost}`} onClick={onPrev}>

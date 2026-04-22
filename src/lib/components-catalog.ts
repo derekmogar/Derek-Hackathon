@@ -8,7 +8,7 @@ import type { SystemComponent } from "./types";
  * Source: LeanScale Renewal Management playbook (Advisory + Methodology
  * docs), mapped to the system layers a CS operator would recognize.
  */
-export const SYSTEM_COMPONENTS: SystemComponent[] = [
+const COMPONENT_DEFINITIONS: SystemComponent[] = [
   /* =============== REPORTING =============== */
   {
     id: "pipeline_dashboard",
@@ -619,6 +619,37 @@ export const SYSTEM_COMPONENTS: SystemComponent[] = [
   },
 ];
 
+/** Display order for the discovery flow — highest churn-reduction impact first.
+ *  Reporting components land at the end (Derek's ask: these are visibility layers
+ *  that depend on the other layers being built first). */
+const DISPLAY_ORDER: string[] = [
+  // Process + automation — the biggest levers
+  "health_engine",
+  "expansion_motion",
+  "alerts_906030",
+  "save_playbook",
+  "save_trigger",
+  "routing_engine",
+  "renewal_ownership",
+  "csm_ae_collab",
+  "usage_data",
+  "contract_data",
+  "csm_routing",
+  "engagement_data",
+  "escalation_matrix",
+  "auto_renewal",
+  "early_renewal",
+  "support_data",
+  // Reporting — last
+  "risk_report",
+  "pipeline_dashboard",
+  "forecast_accuracy",
+];
+
+export const SYSTEM_COMPONENTS: SystemComponent[] = DISPLAY_ORDER.map(
+  (id) => COMPONENT_DEFINITIONS.find((c) => c.id === id),
+).filter((c): c is SystemComponent => !!c);
+
 export const COMPONENT_INDEX: Record<string, SystemComponent> = Object.fromEntries(
-  SYSTEM_COMPONENTS.map((c) => [c.id, c]),
+  COMPONENT_DEFINITIONS.map((c) => [c.id, c]),
 );
